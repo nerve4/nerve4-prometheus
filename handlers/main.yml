@@ -1,0 +1,9 @@
+---
+# handlers for nerve4-prometheus
+
+- name: restart prometheus
+  systemd:
+    daemon_reload: true
+    name: prometheus
+    enabled: yes
+    state: restarted

@@ -1,0 +1,144 @@
+---
+# tasks - rhel.yml for nerve4-prometheus
+
+- name: Install default pkgs to the host
+  ansible.builtin.yum: 
+    name: "{{ dep_packages }}"
+    state: present
+
+- name: Create prometheus system group
+  ansible.builtin.group: 
+    name: "{{ prometheus_system_group }}"
+    system: true
+    state: present
+
+- name: Create prometheus system user
+  ansible.builtin.user:
+    name: "{{ prometheus_user }}"
+    system: true
+    shell: "{{ prometheus_user_shell }}"
+    group: "{{ prometheus_system_group }}"
+    createhome: "{{ prometheus_user_home }}"
+
+- name: Activate SElinux
+  ansible.posix.selinux:
+    policy: targeted
+    state: enforcing
+
+- name: Enable new SElinux policies
+  ansible.builtin.package:
+    name: "{{ item }}"
+    state: present
+  with_items: "{{ prometheus_selinux_packages }}"
+
+- name: Open firewall ports to prometheus
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    zone: public
+    permanent: true
+    immediate: true
+    state: enabled
+  with_items: "{{ prometheus_firewall_ports }}"
+
+- name: Download prometheus binary to local folder
+  ansible.builtin.get_url:
+    url: https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.{{ os_arch }}.tar.gz
+    dest: "/tmp/prometheus-{{ prometheus_version }}.{{ os_arch }}.tar.gz"
+    checksum: "sha256:{{ prometheus_checksum }}"
+
+- name: unpack prometheus binaries
+  ansible.builtin.unarchive:
+    src: "/tmp/prometheus-{{ prometheus_version }}.{{ os_arch }}.tar.gz"
+    dest: "/tmp"
+    remote_src: yes
+
+- name: Rename unzipped packages
+  ansible.builtin.command: "mv prometheus-{{ prometheus_version }}.{{ os_arch }} prometheus-{{ prometheus_version }}"
+  args:
+    chdir: /tmp
+
+- name: Register Prometheus pkgs
+  stat: path="/tmp/prometheus-{{ prometheus_version }}"
+  register: prometheus_stat
+
+- name: Install Prometheus under {{ prometheus_location }}
+  ansible.builtin.command: "mv prometheus-{{ prometheus_version }} {{ prometheus_location }}"
+  args:
+    chdir: /tmp
+  when: prometheus_stat.stat.exists
+
+- name: Create prometheus configuration directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: 0755
+  with_items:
+    - "{{ prometheus_config_dir }}"
+    - "{{ prometheus_config_dir }}/rules"
+    - "{{ prometheus_db }}"
+
+- name: Create Prometheus symlink
+  ansible.builtin.file:
+    src: "{{ prometheus_config_dir }}"
+    dest: "{{ prometheus_symlink }}"
+    owner: root
+    group: root
+    state: link
+
+- name: Setup acl on symlink
+  ansible.posix.acl:
+    path: "{{ prometheus_symlink }}"
+    entity: "{{ prometheus_user }}"
+    etype: user
+    permissions: rx
+    state: present
+
+- name: Create prometheus data directory
+  ansible.builtin.file:
+    path: "{{ prometheus_db }}"
+    state: directory
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_system_group }}"
+    mode: 0755
+
+- name: Setup acl on prometheus data directory
+  ansible.posix.acl:
+    path: "{{ prometheus_config_dir }}"
+    entity: "{{ prometheus_user }}"
+    etype: user
+    permissions: rwx
+    state: present
+
+- name: Setup prometheus user permission
+  ansible.builtin.file:
+    path: "{{ prometheus_config_dir }}"
+    state: directory
+    recurse: yes
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_system_group }}"
+
+- name: Copy prometheus to /usr/local/bin
+  ansible.builtin.copy:
+    src: "{{ prometheus_config_dir }}/prometheus"
+    dest: /usr/local/bin/prometheus
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_system_group }}"
+    remote_src: yes
+    mode: 0755
+
+- name: Create systemd service unit
+  ansible.builtin.template:
+    src: prometheus.service.j2
+    dest: /etc/systemd/system/prometheus.service
+    owner: root
+    group: root
+    mode: 0644
+
+- name: Copy prometheus.yml to ../prometheus directory
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: "{{ prometheus_config_dir }}/prometheus.yml"
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_system_group }}"
+    mode: 0755
+  notify: restart prometheus

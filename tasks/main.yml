@@ -1,0 +1,15 @@
+---
+# tasks - main.yml for nerve4-prometheus
+
+- name: Run a prometheus {{ prometheus_version }}
+  stat:
+    path: "{{ prometheus_config_dir }}"
+  register: result
+
+- include_tasks: rhel.yml
+  when: result.stat.exists == false and ansible_distribution == "CentOS" and ansible_distribution_major_version == "7"
+
+- include_tasks: ubuntu.yml
+  when: result.stat.exists == false and ansible_distribution == "Ubuntu"
+
+- include_tasks: housekeeping.yml

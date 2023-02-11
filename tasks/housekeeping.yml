@@ -1,0 +1,13 @@
+---
+# tasks - housekeeping.yml for nerve4-prometheus
+
+- name: Check leftover .tar.gz in /tmp
+  stat:
+    path: "{{ prometheus_downloaded_pkgs }}"
+  register: result
+
+- name: Delete old file if it's exists
+  ansible.builtin.file:
+    path: "{{ prometheus_downloaded_pkgs }}"
+    state: absent
+  when: result.stat.islnk is defined
